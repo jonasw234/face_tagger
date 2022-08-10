@@ -6,8 +6,19 @@ Currently only tested and working on Windows 10.
 ## Usage
 ```
 Usage: face_tagger PATH ...
-"""
 ```
+
+Example:
+```
+C:\>face_tagger photo_2022-05-22_05-24-38.jpg
+Starting analysis of photo_2022-05-22_05-24-38.jpg ...
+Analysis of photo_2022-05-22_05-24-38.jpg finished. Proceeding adding recognized persons to the metadata.
+Found <REDACTED> in this image. Updating metadata!
+<REDACTED> is already tagged in this image. Not adding them again.
+3 unknown person(s) detected. Please check manually!
+```
+
+Warning, this can take a while depending on the performance of your system. This script automatically uses all the available CPUs to speed it up as much as possible, but it still takes ~ 30 seconds on my computer to process a single image.
 
 ## Installation
 The [dlib](http://dlib.net/) dependency needs [CMake](https://cmake.org/) to install.  
