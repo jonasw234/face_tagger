@@ -9,6 +9,7 @@ import itertools
 import logging
 import multiprocessing
 import os
+import pickle
 import subprocess
 import sys
 from typing import Tuple
@@ -184,8 +185,36 @@ def scan_known_people(known_people_folder: str) -> Tuple[list, list]:
     known_names = []
     known_face_encodings = []
 
-    for file in scan_image_files([known_people_folder]):
+    # WARNING: Cache file needs to be trusted
+    known_filesize_bytes = []
+    cachefile_path = os.path.join(known_people_folder, "cache.pkl")
+    cache_dirty = False
+
+    try:
+        with open(cachefile_path, "rb") as cachefile:
+            known_names, known_face_encodings, known_filesize_bytes = pickle.load(
+                cachefile
+            )
+    except FileNotFoundError:
+        # No cache exists yet
+        pass
+
+    known_people_files = scan_image_files([known_people_folder])
+    for file in known_people_files:
         basename = os.path.splitext(os.path.basename(file))[0]
+        # Check cache first
+        filesize_bytes = os.path.getsize(file)
+        try:
+            idx = known_names.index(basename)
+            if idx != -1 and filesize_bytes == known_filesize_bytes[idx]:
+                logging.debug("Using cached encodings for %s.", file)
+                continue
+        except ValueError:
+            # New entry for cache
+            pass
+        logging.debug("%s does not exist in the cache yet.", file)
+        cache_dirty = True
+        # Not found in cache
         img = face_recognition.load_image_file(file)
         encodings = face_recognition.face_encodings(img)
 
@@ -198,6 +227,15 @@ def scan_known_people(known_people_folder: str) -> Tuple[list, list]:
         else:
             known_names.append(basename)
             known_face_encodings.append(encodings[0])
+            known_filesize_bytes.append(filesize_bytes)
+    if cache_dirty or len(known_people_files) != len(
+        known_names
+    ):  # Clear cache if changed
+        # Update cache with new information
+        with open(cachefile_path, "wb") as cachefile:
+            pickle.dump(
+                [known_names, known_face_encodings, known_filesize_bytes], cachefile
+            )
 
     return known_names, known_face_encodings
 
@@ -254,7 +292,7 @@ def main(files: list):
     if not files:
         logging.critical("No files supplied to recognize!")
         return
-    logging.info("Analyzing known faces ...")
+    logging.info("Analyzing known faces for reference ...")
     known_names, known_face_encodings = scan_known_people(
         os.path.join(
             os.path.dirname(os.path.realpath(__file__)),
