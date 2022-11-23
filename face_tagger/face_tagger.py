@@ -2,8 +2,13 @@
 """Tries to recognize faces in input image list and update file’s metadata.
 
 Usage:
-    gesichtserkennung.py PATH ...
+    gesichtserkennung.py [--tolerance=<float>] PATH ...
+
+Options:
+    --tolerance=<float> Tolerance for face detection (higher: more false
+                        positives, less false negatives) [default: 0.55].
 """
+# TODO Make use of multithreading (prework already done below)
 import glob
 import itertools
 import logging
@@ -86,6 +91,7 @@ def scan_image_files(files: list) -> list:
     return filenames
 
 
+# TODO Oops, this is not used yet
 def process_images_in_process_pool(
     images_to_check: list, known_names: list, known_face_encodings: list
 ):
@@ -117,7 +123,7 @@ def process_images_in_process_pool(
 
 
 def analyze_file(
-    file: str, known_names: list, known_face_encodings: list, tolerance: float = 0.5
+    file: str, known_names: list, known_face_encodings: list, tolerance: float = 0.55
 ) -> list:
     """Analyze a file and try to identify people in it.
 
@@ -281,13 +287,15 @@ def add_metadata(file: str, recognized_people: list):
             )
 
 
-def main(files: list):
+def main(files: list, tolerance: float=0.55):
     """Read list of files, recognize faces and update metadata.
 
     Parameters
     ----------
     files : list
         List of input images
+    tolerance : float
+        Tolerance to use for face recognition
     """
     if not files:
         logging.critical("No files supplied to recognize!")
@@ -299,9 +307,10 @@ def main(files: list):
             "reference_images",
         ),
     )
+    logging.debug("Using a tolerance of %f for face recognition.", tolerance)
     for idx, file in enumerate(scan_image_files(files), start=1):
-        logging.info("Starting analysis of %s (%d/%d) ...", file, idx, len(files))
-        recognized_people = analyze_file(file, known_names, known_face_encodings)
+        logging.info("Starting analysis of %s (%d/%d) ...", file, idx, len(files) - 1)
+        recognized_people = analyze_file(file, known_names, known_face_encodings, tolerance)
         logging.debug(
             "Analysis of %s finished. Proceeding adding recognized people to the metadata.",
             file,
@@ -330,4 +339,10 @@ def main(files: list):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    if len(sys.argv) < 2:
+        print(__doc__)
+        sys.exit(1)
+    if "--tolerance=" in sys.argv[1]:
+        main(sys.argv[2:], tolerance=float(sys.argv[1][len("--tolerance=") + 1:]))
+    else:
+        main(sys.argv[1:])
