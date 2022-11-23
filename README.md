@@ -5,7 +5,13 @@ Currently only tested and working on Windows 10.
 
 ## Usage
 ```
-Usage: face_tagger PATH ...
+Usage:
+    face_tagger [--tolerance=<float>] PATH ...
+
+Options:
+    --tolerance=<float> Tolerance for face detection (higher: more false
+                        positives, less false negatives) [default: 0.55].
+
 ```
 
 Example:
