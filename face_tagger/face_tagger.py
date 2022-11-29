@@ -2,11 +2,12 @@
 """Tries to recognize faces in input image list and update file’s metadata.
 
 Usage:
-    gesichtserkennung.py [--tolerance=<float>] PATH ...
+gesichtserkennung.py [-v] [--tolerance=<float>] PATH ...
 
 Options:
-    --tolerance=<float> Tolerance for face detection (higher: more false
-                        positives, less false negatives) [default: 0.55].
+    -t <float>, --tolerance=<float> Tolerance for face detection (higher: more false
+                                    positives, less false negatives) [default: 0.55].
+    -v, --verbose                   Verbose output
 """
 # TODO Make use of multithreading (prework already done below)
 import glob
@@ -19,6 +20,7 @@ import subprocess
 import sys
 from typing import Tuple
 
+from docopt import docopt
 import face_recognition.api as face_recognition
 import numpy as np
 import PIL.Image
@@ -276,7 +278,7 @@ def add_metadata(file: str, recognized_people: list):
 
     for person in recognized_people:
         if person not in current_metadata:
-            logging.info("Found %s in this image. Updating metadata!", person)
+            logging.debug("Found %s in this image. Updating metadata!", person)
             # Newly found person
             exiftool_write(file, "Keywords", person)
             exiftool_write(file, "HierarchicalSubject", f"Personen|{person}")
@@ -287,7 +289,7 @@ def add_metadata(file: str, recognized_people: list):
             )
 
 
-def main(files: list, tolerance: float=0.55):
+def main(files: list, tolerance: float = 0.55):
     """Read list of files, recognize faces and update metadata.
 
     Parameters
@@ -304,13 +306,15 @@ def main(files: list, tolerance: float=0.55):
     known_names, known_face_encodings = scan_known_people(
         os.path.join(
             os.path.dirname(os.path.realpath(__file__)),
-            "reference_images",
+            "Referenzen Gesichtserkennung",
         ),
     )
     logging.debug("Using a tolerance of %f for face recognition.", tolerance)
     for idx, file in enumerate(scan_image_files(files), start=1):
         logging.info("Starting analysis of %s (%d/%d) ...", file, idx, len(files) - 1)
-        recognized_people = analyze_file(file, known_names, known_face_encodings, tolerance)
+        recognized_people = analyze_file(
+            file, known_names, known_face_encodings, tolerance
+        )
         logging.debug(
             "Analysis of %s finished. Proceeding adding recognized people to the metadata.",
             file,
@@ -335,14 +339,13 @@ def main(files: list, tolerance: float=0.55):
         elif "warning:" in recognized_people:
             logging.warning("Warning during processing: %s", recognized_people)
         else:
-            logging.info("No person—not even someone unknown—identified in this image.")
+            logging.debug(
+                "No person—not even someone unknown—identified in this image."
+            )
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print(__doc__)
-        sys.exit(1)
-    if "--tolerance=" in sys.argv[1]:
-        main(sys.argv[2:], tolerance=float(sys.argv[1][len("--tolerance=") + 1:]))
-    else:
-        main(sys.argv[1:])
+    args = docopt(__doc__)
+    if args["--verbose"]:
+        logging.basicConfig(level=logging.DEBUG)
+    main(args["PATH"], tolerance=float(args["--tolerance"]))
