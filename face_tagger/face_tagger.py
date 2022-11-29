@@ -306,7 +306,7 @@ def main(files: list, tolerance: float = 0.55):
     known_names, known_face_encodings = scan_known_people(
         os.path.join(
             os.path.dirname(os.path.realpath(__file__)),
-            "Referenzen Gesichtserkennung",
+            "reference_images",
         ),
     )
     logging.debug("Using a tolerance of %f for face recognition.", tolerance)
