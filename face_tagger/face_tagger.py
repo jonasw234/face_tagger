@@ -146,7 +146,11 @@ def analyze_file(
     list
         The list of recognized people
     """
-    unknown_image = face_recognition.load_image_file(file)
+    try:
+        unknown_image = face_recognition.load_image_file(file)
+    except FileNotFoundError:
+        logging.warning("%s was removed before processing.", file)
+        return []
     # Scale down image if it’s giant so things run a little faster
     if max(unknown_image.shape) > 1600:
         pil_img = PIL.Image.fromarray(unknown_image)
