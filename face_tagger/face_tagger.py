@@ -9,21 +9,18 @@ Options:
                                     positives, less false negatives) [default: 0.55].
     -v, --verbose                   Verbose output
 """
-# TODO Make use of multithreading (prework already done below)
 import glob
-import itertools
 import logging
-import multiprocessing
 import os
 import pickle
 import subprocess
-import sys
-from typing import Tuple
+from concurrent.futures import ProcessPoolExecutor
+from typing import List, Tuple
 
-from docopt import docopt
 import face_recognition.api as face_recognition
 import numpy as np
 import PIL.Image
+from docopt import docopt
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(message)s")
 
@@ -55,18 +52,18 @@ def exiftool_write(file: str, field: str, metadata: str):
     )
 
 
-def scan_image_files(files: list) -> list:
+def scan_image_files(files: List[str]) -> List[str]:
     """Iterate through all files in a list of files.
     Recursively add image files to the list if the file is a directory.
 
     Parameters
     ----------
-    files : list
+    files : List[str]
         List of files
 
     Returns
     -------
-    list
+    List[str]
         List of filenames
     """
     filenames = []
@@ -78,13 +75,11 @@ def scan_image_files(files: list) -> list:
                 file,
             )
             # Add images in directory
-            files.extend(glob.glob(os.path.join(file, "*.jpeg")))
-            files.extend(glob.glob(os.path.join(file, "*.jpg")))
-            files.extend(glob.glob(os.path.join(file, "*.png")))
-            # Also from subdirectories
-            files.extend(glob.glob(os.path.join(file, "**/*.jpeg")))
-            files.extend(glob.glob(os.path.join(file, "**/*.jpg")))
-            files.extend(glob.glob(os.path.join(file, "**/*.png")))
+            image_extensions = ["jpeg", "jpg", "png"]
+            for extension in image_extensions:
+                files.extend(glob.glob(os.path.join(file, f"*.{extension}")))
+                # Also from subdirectories
+                files.extend(glob.glob(os.path.join(file, f"**/*.{extension}")))
             continue
         if not os.path.isfile(file):
             logging.warning("Cannot read %s, skipping ...", file)
@@ -93,40 +88,9 @@ def scan_image_files(files: list) -> list:
     return filenames
 
 
-# TODO Oops, this is not used yet
-def process_images_in_process_pool(
-    images_to_check: list, known_names: list, known_face_encodings: list
-):
-    """Process multiple images in a process pool.
-
-    Parameters
-    ----------
-    images_to_check : list
-        List of images to check
-    known_names : list
-        List of known names
-    known_face_encodings : list
-        List of known face encodings
-    """
-    # MacOS will crash due to a bug in libdispatch if you don’t use “forkserver”
-    context = multiprocessing
-    if "forkserver" in multiprocessing.get_all_start_methods():
-        context = multiprocessing.get_context("forkserver")
-
-    pool = context.Pool(processes=None)
-
-    function_parameters = zip(
-        images_to_check,
-        itertools.repeat(known_names),
-        itertools.repeat(known_face_encodings),
-    )
-
-    pool.starmap(analyze_file, function_parameters)
-
-
 def analyze_file(
     file: str, known_names: list, known_face_encodings: list, tolerance: float = 0.55
-) -> list:
+) -> List[str]:
     """Analyze a file and try to identify people in it.
 
     Parameters
@@ -143,7 +107,7 @@ def analyze_file(
 
     Returns
     -------
-    list
+    List[str]
         The list of recognized people
     """
     try:
@@ -181,7 +145,7 @@ def analyze_file(
     return recognized_people
 
 
-def scan_known_people(known_people_folder: str) -> Tuple[list, list]:
+def scan_known_people(known_people_folder: str) -> Tuple[List[str], List[np.ndarray]]:
     """Scan a folder with known people and return their name and encoding.
 
     Parameters
@@ -191,7 +155,7 @@ def scan_known_people(known_people_folder: str) -> Tuple[list, list]:
 
     Returns
     -------
-    Tuple[list, list]
+    Tuple[List[str], List[np.ndarray]]
         Name of the person and encoding
     """
     known_names = []
@@ -216,14 +180,10 @@ def scan_known_people(known_people_folder: str) -> Tuple[list, list]:
         basename = os.path.splitext(os.path.basename(file))[0]
         # Check cache first
         filesize_bytes = os.path.getsize(file)
-        try:
-            idx = known_names.index(basename)
-            if idx != -1 and filesize_bytes == known_filesize_bytes[idx]:
-                logging.debug("Using cached encodings for %s.", file)
-                continue
-        except ValueError:
-            # New entry for cache
-            pass
+        idx = known_names.index(basename) if basename in known_names else -1
+        if idx != -1 and filesize_bytes == known_filesize_bytes[idx]:
+            logging.debug("Using cached encodings for %s.", file)
+            continue
         logging.debug("%s does not exist in the cache yet.", file)
         cache_dirty = True
         # Not found in cache
@@ -264,15 +224,11 @@ def add_metadata(file: str, recognized_people: list):
     """
     # Found at least one recognized person
     current_metadata = (
-        (
-            subprocess.run(
-                ["exiftool", "-Keywords", file], capture_output=True, check=True
-            )
-            .stdout.decode(encoding="ansi")
-            .strip()
-        )
-        .encode("ansi")
-        .decode("utf8")
+        subprocess.run(["exiftool", "-Keywords", file], capture_output=True, check=True)
+        .stdout.decode(encoding="ansi")
+        .strip()
+        # .encode("ansi")
+        # .decode("utf8")
     )
     if not "Personen" in current_metadata:
         # No person found before (assuming Bridge metadata format)
@@ -314,38 +270,47 @@ def main(files: list, tolerance: float = 0.55):
         ),
     )
     logging.debug("Using a tolerance of %f for face recognition.", tolerance)
-    for idx, file in enumerate(scan_image_files(files), start=1):
-        logging.info("Starting analysis of %s (%d/%d) ...", file, idx, len(files) - 1)
-        recognized_people = analyze_file(
-            file, known_names, known_face_encodings, tolerance
-        )
-        logging.debug(
-            "Analysis of %s finished. Proceeding adding recognized people to the metadata.",
-            file,
-        )
-        if (
-            recognized_people
-            and "no_people_found" not in recognized_people
-            and "warning:" not in recognized_people
-        ):
-            if recognized_people.count("unknown_person"):
-                logging.warning(
-                    "%d unknown person(s) detected. Please check manually!",
-                    recognized_people.count("unknown_person"),
-                )
-                while recognized_people.count("unknown_person"):  # Might be multiple
-                    recognized_people.remove("unknown_person")
-            if not recognized_people:
-                # Only unknown people were identified, so we can stop here
-                continue
-            # Found at least one recognized person
-            add_metadata(file, recognized_people)
-        elif "warning:" in recognized_people:
-            logging.warning("Warning during processing: %s", recognized_people)
-        else:
-            logging.debug(
-                "No person—not even someone unknown—identified in this image."
+    with ProcessPoolExecutor() as executor:
+        futures = []
+        for file in scan_image_files(files):
+            logging.info("Starting analysis of %s ...", file)
+            future = executor.submit(
+                analyze_file, file, known_names, known_face_encodings, tolerance
             )
+            futures.append(future)
+
+        for future, file in zip(futures, scan_image_files(files)):
+            recognized_people = future.result()
+            logging.debug(
+                "Analysis of %s finished. Proceeding adding recognized people to the metadata.",
+                file,
+            )
+            if (
+                recognized_people
+                and "no_people_found" not in recognized_people
+                and "warning:" not in recognized_people
+            ):
+                if recognized_people.count("unknown_person"):
+                    logging.warning(
+                        "%d unknown person(s) detected in %s. Please check manually!",
+                        recognized_people.count("unknown_person"),
+                        file,
+                    )
+                    while recognized_people.count(
+                        "unknown_person"
+                    ):  # Might be multiple
+                        recognized_people.remove("unknown_person")
+                if not recognized_people:
+                    # Only unknown people were identified, so we can stop here
+                    continue
+                # Found at least one recognized person
+                add_metadata(file, recognized_people)
+            elif "warning:" in recognized_people:
+                logging.warning("Warning during processing: %s", recognized_people)
+            else:
+                logging.debug(
+                    "No person—not even someone unknown—identified in %s.", file
+                )
 
 
 if __name__ == "__main__":
