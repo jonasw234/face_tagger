@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="face_tagger",
-    version="0.0.2",
+    version="0.0.4",
     author="Jonas A. Wendorf",
     description="Tags recognized faces in images in Adobe Bridge compatible format",
     long_description=long_description,
