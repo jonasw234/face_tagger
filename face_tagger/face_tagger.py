@@ -23,17 +23,20 @@ import PIL.Image
 from docopt import docopt
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(message)s")
+TOP_KEYWORD = "Personen"
 
 
-def exiftool_write(file: str, field: str, metadata: str):
+def exiftool_write(
+    file: str, hierarchical_metadata: str = TOP_KEYWORD, metadata: str = TOP_KEYWORD
+):
     """Use exiftool to write metadata.
 
     Parameters
     ----------
     file : str
         Path to the file
-    field : str
-        Metadata field to append to
+    hierarchical_metadata : str
+        Hierarchical metadata to write
     metadata : str
         Metadata to write
     """
@@ -44,7 +47,9 @@ def exiftool_write(file: str, field: str, metadata: str):
             "-L",  # Don’t convert encodings
             "-charset",
             "filename=cp1252",  # For Windows file paths
-            f"-{field}+={metadata}",
+            f"-Keywords+={metadata}",
+            f"-HierarchicalSubject+={hierarchical_metadata}",
+            f"-Subject+={metadata}",
             file,
         ],
         stdout=subprocess.DEVNULL,
@@ -212,14 +217,14 @@ def scan_known_people(known_people_folder: str) -> Tuple[List[str], List[np.ndar
     return known_names, known_face_encodings
 
 
-def add_metadata(file: str, recognized_people: list):
+def add_metadata(file: str, recognized_people: List[str]):
     """Add list of recognized people to a file.
 
     Parameters
     ----------
     file : str
         File to add the metadata to
-    recognized_people : list
+    recognized_people : List[str]
         List of recognized people
     """
     # Found at least one recognized person
@@ -227,22 +232,16 @@ def add_metadata(file: str, recognized_people: list):
         subprocess.run(["exiftool", "-Keywords", file], capture_output=True, check=True)
         .stdout.decode(encoding="ansi")
         .strip()
-        # .encode("ansi")
-        # .decode("utf8")
     )
-    if not "Personen" in current_metadata:
+    if not TOP_KEYWORD in current_metadata:
         # No person found before (assuming Bridge metadata format)
-        exiftool_write(file, "Keywords", "Personen")
-        exiftool_write(file, "HierarchicalSubject", "Personen")
-        exiftool_write(file, "Subject", "Personen")
+        exiftool_write(file)
 
     for person in recognized_people:
         if person not in current_metadata:
             logging.debug("Found %s in this image. Updating metadata!", person)
             # Newly found person
-            exiftool_write(file, "Keywords", person)
-            exiftool_write(file, "HierarchicalSubject", f"Personen|{person}")
-            exiftool_write(file, "Subject", person)
+            exiftool_write(file, f"{TOP_KEYWORD}|{person}", person)
         else:
             logging.debug(
                 "%s is already tagged in this image. Not adding them again.", person
