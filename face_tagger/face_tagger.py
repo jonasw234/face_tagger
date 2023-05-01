@@ -27,31 +27,36 @@ TOP_KEYWORD = "Personen"
 
 
 def exiftool_write(
-    file: str, hierarchical_metadata: str = TOP_KEYWORD, metadata: str = TOP_KEYWORD
+    file_path: str,
+    hierarchical_metadata: List[str] = [TOP_KEYWORD],
+    metadata: List[str] = [TOP_KEYWORD],
 ):
     """Use exiftool to write metadata.
 
     Parameters
     ----------
-    file : str
+    file_path : str
         Path to the file
-    hierarchical_metadata : str
+    hierarchical_metadata : List[str]
         Hierarchical metadata to write
-    metadata : str
+    metadata : List[str]
         Metadata to write
     """
+    parameters = [
+        "exiftool",
+        "-overwrite_original",
+        "-L",  # Don’t convert encodings
+        "-charset",
+        "filename=cp1252",  # For Windows file paths
+    ]
+    parameters.extend([f"-Keywords+={person}" for person in metadata])
+    parameters.extend(
+        [f"-HierarchicalSubject+={person_sub}" for person_sub in hierarchical_metadata]
+    )
+    parameters.extend([f"-Subject+={person}" for person in metadata])
+    parameters.append(file_path)
     subprocess.run(
-        [
-            "exiftool",
-            "-overwrite_original",
-            "-L",  # Don’t convert encodings
-            "-charset",
-            "filename=cp1252",  # For Windows file paths
-            f"-Keywords+={metadata}",
-            f"-HierarchicalSubject+={hierarchical_metadata}",
-            f"-Subject+={metadata}",
-            file,
-        ],
+        parameters,
         stdout=subprocess.DEVNULL,
         check=True,
     )
@@ -217,35 +222,38 @@ def scan_known_people(known_people_folder: str) -> Tuple[List[str], List[np.ndar
     return known_names, known_face_encodings
 
 
-def add_metadata(file: str, recognized_people: List[str]):
+def add_metadata(file_path: str, recognized_people: List[str]):
     """Add list of recognized people to a file.
 
     Parameters
     ----------
-    file : str
+    file_path : str
         File to add the metadata to
     recognized_people : List[str]
         List of recognized people
     """
     # Found at least one recognized person
     current_metadata = (
-        subprocess.run(["exiftool", "-Keywords", file], capture_output=True, check=True)
+        subprocess.run(
+            ["exiftool", "-Keywords", file_path], capture_output=True, check=True
+        )
         .stdout.decode(encoding="ansi")
         .strip()
     )
+
+    new_persons = [
+        person for person in recognized_people if person not in current_metadata
+    ]
+    new_persons_sub = [
+        f"{TOP_KEYWORD}|{person}"
+        for person in recognized_people
+        if person not in current_metadata
+    ]
     if not TOP_KEYWORD in current_metadata:
         # No person found before (assuming Bridge metadata format)
-        exiftool_write(file)
-
-    for person in recognized_people:
-        if person not in current_metadata:
-            logging.debug("Found %s in this image. Updating metadata!", person)
-            # Newly found person
-            exiftool_write(file, f"{TOP_KEYWORD}|{person}", person)
-        else:
-            logging.debug(
-                "%s is already tagged in this image. Not adding them again.", person
-            )
+        new_persons.append(TOP_KEYWORD)
+        new_persons_sub.append(TOP_KEYWORD)
+    exiftool_write(file_path, new_persons_sub, new_persons)
 
 
 def main(files: list, tolerance: float = 0.55):
