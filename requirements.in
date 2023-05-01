@@ -1,3 +1,5 @@
 dlib
 face_recognition
 docopt
+numpy
+PIL
