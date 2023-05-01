@@ -232,28 +232,14 @@ def add_metadata(file_path: str, recognized_people: List[str]):
     recognized_people : List[str]
         List of recognized people
     """
-    # Found at least one recognized person
-    current_metadata = (
-        subprocess.run(
-            ["exiftool", "-Keywords", file_path], capture_output=True, check=True
-        )
-        .stdout.decode(encoding="ansi")
-        .strip()
-    )
-
-    new_persons = [
-        person for person in recognized_people if person not in current_metadata
-    ]
-    new_persons_sub = [
+    recognized_people_sub = [
         f"{TOP_KEYWORD}|{person}"
         for person in recognized_people
-        if person not in current_metadata
     ]
-    if not TOP_KEYWORD in current_metadata:
-        # No person found before (assuming Bridge metadata format)
-        new_persons.append(TOP_KEYWORD)
-        new_persons_sub.append(TOP_KEYWORD)
-    exiftool_write(file_path, new_persons_sub, new_persons)
+    recognized_people.append(TOP_KEYWORD)
+    recognized_people_sub.append(TOP_KEYWORD)
+    logging.debug("Adding the following metadata: %s", recognized_people)
+    exiftool_write(file_path, recognized_people_sub, recognized_people)
 
 
 def main(files: list, tolerance: float = 0.55):
