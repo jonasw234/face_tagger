@@ -2,12 +2,11 @@
 """Tries to recognize faces in input image list and update file’s metadata.
 
 Usage:
-gesichtserkennung.py [-v] [--tolerance=<float>] PATH ...
+gesichtserkennung.py [-v] --references=<PATH> [--tolerance=<VALUE>] <PATH>...
 
-Options:
-    -t <float>, --tolerance=<float> Tolerance for face detection (higher: more false
-                                    positives, less false negatives) [default: 0.55].
-    -v, --verbose                   Verbose output
+-r PATH, --references <PATH>   Path to the folder with reference images
+-t VALUE, --tolerance <VALUE>  Tolerance for face detection (higher: more false positives, less false negatives) [default: 0.55].
+-v, --verbose                  Verbose output
 """
 import glob
 import logging
@@ -17,12 +16,23 @@ import subprocess
 from concurrent.futures import ProcessPoolExecutor
 from typing import List, Tuple
 
+import cv2
 import face_recognition.api as face_recognition
 import numpy as np
 import PIL.Image
 from docopt import docopt
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(message)s")
+
+IMAGE_EXTENSIONS = ["jpeg", "jpg", "png"]
+VIDEO_EXTENSIONS = ["mp4", "avi", "mkv", "mov"]
+ALLOWED_EXTENSIONS = IMAGE_EXTENSIONS + VIDEO_EXTENSIONS
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler()
+formatter = logging.Formatter("%(levelname)s:%(message)s")
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 TOP_KEYWORD = "Personen"
 
 
@@ -62,9 +72,9 @@ def exiftool_write(
     )
 
 
-def scan_image_files(files: List[str]) -> List[str]:
+def scan_files(files: List[str]) -> List[str]:
     """Iterate through all files in a list of files.
-    Recursively add image files to the list if the file is a directory.
+    Recursively add image and movie files to the list if the file is a directory.
 
     Parameters
     ----------
@@ -77,39 +87,42 @@ def scan_image_files(files: List[str]) -> List[str]:
         List of filenames
     """
     filenames = []
-    for file in files:
-        if os.path.isdir(file):
-            logging.debug(
-                "Adding *.jpeg, *.jpg, and *.png files in %s directory "
+    for file_path in files:
+        if os.path.isdir(file_path):
+            # Add images and videos in directory
+            logger.debug(
+                "Adding %s files in %s directory "
                 "(and its subdirectories) to input list.",
-                file,
+                f"f{', '.join(ALLOWED_EXTENSIONS[:-1]}, and {ALLOWED_EXTENSIONS[-1]}",
+                file_path,
             )
-            # Add images in directory
-            image_extensions = ["jpeg", "jpg", "png"]
-            for extension in image_extensions:
-                files.extend(glob.glob(os.path.join(file, f"*.{extension}")))
+            for extension in ALLOWED_EXTENSIONS:
+                files.extend(glob.glob(os.path.join(file_path, f"*.{extension}")))
                 # Also from subdirectories
-                files.extend(glob.glob(os.path.join(file, f"**/*.{extension}")))
+                files.extend(glob.glob(os.path.join(file_path, f"**/*.{extension}")))
             continue
-        if not os.path.isfile(file):
-            logging.warning("Cannot read %s, skipping ...", file)
+        if not os.path.isfile(file_path):
+            logger.warning("Cannot read %s, skipping ...", file_path)
             continue
-        filenames.append(file)
+        filenames.append(file_path)
     return filenames
 
 
 def analyze_file(
-    file: str, known_names: list, known_face_encodings: list, tolerance: float = 0.55
+    file_path: str,
+    known_names: List[str],
+    known_face_encodings: List[np.ndarray],
+    tolerance: float = 0.55,
 ) -> List[str]:
     """Analyze a file and try to identify people in it.
 
     Parameters
     ----------
-    file : str
+    file_path : str
         The file to analyze
-    known_names : list
+    known_names : List[str]
         List of known names
-    known_face_encodings : list
+    known_face_encodings : List[np.ndarray]
         List of known face encodings
     tolerance : float
         Tolerance for determining whether two faces are the same (lower for
@@ -120,18 +133,33 @@ def analyze_file(
     List[str]
         The list of recognized people
     """
-    try:
-        unknown_image = face_recognition.load_image_file(file)
-    except FileNotFoundError:
-        logging.warning("%s was removed before processing.", file)
-        return []
-    # Scale down image if it’s giant so things run a little faster
-    if max(unknown_image.shape) > 1600:
-        pil_img = PIL.Image.fromarray(unknown_image)
-        pil_img.thumbnail((1600, 1600), PIL.Image.Resampling.LANCZOS)
-        unknown_image = np.array(pil_img)
+    if file_path.lower().endswith(tuple(VIDEO_EXTENSIONS)):
+        # Video file detected, analyze the first frame
+        try:
+            video_capture = cv2.VideoCapture(file_path)
+            ret, frame = video_capture.read()
+            video_capture.release()
+            if not ret:
+                logger.warning("Failed to read the first frame from %s", file_path)
+                return []
+        except Exception as e:
+            logger.warning("Error processing video file %s: %s", file_path, str(e))
+            return []
+    else:
+        # Regular image file
+        try:
+            frame = face_recognition.load_image_file(file_path)
+        except FileNotFoundError:
+            logger.warning("%s was removed before processing.", file_path)
+            return []
 
-    unknown_encodings = face_recognition.face_encodings(unknown_image)
+    # Scale down image if it’s giant so things run a little faster
+    if max(frame.shape) > 1600:
+        pil_img = PIL.Image.fromarray(frame)
+        pil_img.thumbnail((1600, 1600), PIL.Image.Resampling.LANCZOS)
+        frame = np.array(pil_img)
+
+    unknown_encodings = face_recognition.face_encodings(frame)
 
     recognized_people = []
 
@@ -161,7 +189,7 @@ def scan_known_people(known_people_folder: str) -> Tuple[List[str], List[np.ndar
     Parameters
     ----------
     known_people_folder : str
-        The name of the folder with known people
+        The path of the folder with known people
 
     Returns
     -------
@@ -185,27 +213,28 @@ def scan_known_people(known_people_folder: str) -> Tuple[List[str], List[np.ndar
         # No cache exists yet
         pass
 
-    known_people_files = scan_image_files([known_people_folder])
-    for file in known_people_files:
-        basename = os.path.splitext(os.path.basename(file))[0]
+    known_people_files = scan_files([known_people_folder])
+    for file_path in known_people_files:
+        basename = os.path.splitext(os.path.basename(file_path))[0]
         # Check cache first
-        filesize_bytes = os.path.getsize(file)
+        filesize_bytes = os.path.getsize(file_path)
         idx = known_names.index(basename) if basename in known_names else -1
         if idx != -1 and filesize_bytes == known_filesize_bytes[idx]:
-            logging.debug("Using cached encodings for %s.", file)
+            logger.debug("Using cached encodings for %s.", file_path)
             continue
-        logging.debug("%s does not exist in the cache yet.", file)
+        logger.debug("%s does not exist in the cache yet.", file_path)
         cache_dirty = True
         # Not found in cache
-        img = face_recognition.load_image_file(file)
+        img = face_recognition.load_image_file(file_path)
         encodings = face_recognition.face_encodings(img)
 
         if len(encodings) > 1:
-            logging.debug(
-                "More than one face found in %s. Only considering the first face.", file
+            logger.debug(
+                "More than one face found in %s. Only considering the first face.",
+                file_path,
             )
         elif not encodings:
-            logging.debug("No faces found in %s. Ignoring file.", file)
+            logger.debug("No faces found in %s. Ignoring file.", file_path)
         else:
             known_names.append(basename)
             known_face_encodings.append(encodings[0])
@@ -232,51 +261,45 @@ def add_metadata(file_path: str, recognized_people: List[str]):
     recognized_people : List[str]
         List of recognized people
     """
-    recognized_people_sub = [
-        f"{TOP_KEYWORD}|{person}"
-        for person in recognized_people
-    ]
+    recognized_people_sub = [f"{TOP_KEYWORD}|{person}" for person in recognized_people]
     recognized_people.append(TOP_KEYWORD)
     recognized_people_sub.append(TOP_KEYWORD)
-    logging.debug("Adding the following metadata: %s", recognized_people)
+    logger.debug("Adding the following metadata: %s", recognized_people)
     exiftool_write(file_path, recognized_people_sub, recognized_people)
 
 
-def main(files: list, tolerance: float = 0.55):
+def main(files: List[str], tolerance: float = 0.55, references: str = ""):
     """Read list of files, recognize faces and update metadata.
 
     Parameters
     ----------
-    files : list
+    files : List[str]
         List of input images
     tolerance : float
         Tolerance to use for face recognition
+    references : str
+        Path to a folder with known people
     """
     if not files:
-        logging.critical("No files supplied to recognize!")
+        logger.critical("No files supplied to recognize!")
         return
-    logging.info("Analyzing known faces for reference ...")
-    known_names, known_face_encodings = scan_known_people(
-        os.path.join(
-            os.path.dirname(os.path.realpath(__file__)),
-            "reference_images",
-        ),
-    )
-    logging.debug("Using a tolerance of %f for face recognition.", tolerance)
+    logger.info("Analyzing known faces for reference ...")
+    known_names, known_face_encodings = scan_known_people(references)
+    logger.debug("Using a tolerance of %f for face recognition.", tolerance)
     with ProcessPoolExecutor() as executor:
         futures = []
-        for file in scan_image_files(files):
-            logging.info("Starting analysis of %s ...", file)
+        for file_path in scan_files(files):
+            logger.info("Starting analysis of %s ...", file_path)
             future = executor.submit(
-                analyze_file, file, known_names, known_face_encodings, tolerance
+                analyze_file, file_path, known_names, known_face_encodings, tolerance
             )
             futures.append(future)
 
-        for future, file in zip(futures, scan_image_files(files)):
+        for future, file_path in zip(futures, scan_files(files)):
             recognized_people = future.result()
-            logging.debug(
+            logger.debug(
                 "Analysis of %s finished. Proceeding adding recognized people to the metadata.",
-                file,
+                file_path,
             )
             if (
                 recognized_people
@@ -284,10 +307,10 @@ def main(files: list, tolerance: float = 0.55):
                 and "warning:" not in recognized_people
             ):
                 if recognized_people.count("unknown_person"):
-                    logging.warning(
+                    logger.warning(
                         "%d unknown person(s) detected in %s. Please check manually!",
                         recognized_people.count("unknown_person"),
-                        file,
+                        file_path,
                     )
                     while recognized_people.count(
                         "unknown_person"
@@ -297,17 +320,21 @@ def main(files: list, tolerance: float = 0.55):
                     # Only unknown people were identified, so we can stop here
                     continue
                 # Found at least one recognized person
-                add_metadata(file, recognized_people)
+                add_metadata(file_path, recognized_people)
             elif "warning:" in recognized_people:
-                logging.warning("Warning during processing: %s", recognized_people)
+                logger.warning("Warning during processing: %s", recognized_people)
             else:
-                logging.debug(
-                    "No person—not even someone unknown—identified in %s.", file
+                logger.debug(
+                    "No person—not even someone unknown—identified in %s.", file_path
                 )
 
 
 if __name__ == "__main__":
     args = docopt(__doc__)
     if args["--verbose"]:
-        logging.basicConfig(level=logging.DEBUG)
-    main(args["PATH"], tolerance=float(args["--tolerance"]))
+        logger.setLevel(logging.DEBUG)
+    main(
+        args["<PATH>"],
+        tolerance=float(args["--tolerance"]),
+        references=args["--references"],
+    )

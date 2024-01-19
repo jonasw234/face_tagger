@@ -6,12 +6,11 @@ Currently only tested and working on Windows 10.
 ## Usage
 ```
 Usage:
-    face_tagger [--tolerance=<float>] PATH ...
+gesichtserkennung.py [-v] --references=<PATH> [--tolerance=<VALUE>] <PATH>...
 
-Options:
-    --tolerance=<float> Tolerance for face detection (higher: more false
-                        positives, less false negatives) [default: 0.55].
-
+-r PATH, --references <PATH>   Path to the folder with reference images
+-t VALUE, --tolerance <VALUE>  Tolerance for face detection (higher: more false positives, less false negatives) [default: 0.55].
+-v, --verbose                  Verbose output
 ```
 
 Example:
@@ -37,7 +36,7 @@ Y Cb Cr Sub Sampling            : YCbCr4:2:0 (2 2)
 Image Size                      : 640x640
 Megapixels                      : 0.410
 
-C:\>face_tagger photo_2022-05-22_05-24-38.jpg
+C:\>face_tagger -r references photo_2022-05-22_05-24-38.jpg
 Starting analysis of photo_2022-05-22_05-24-38.jpg ...
 Analysis of photo_2022-05-22_05-24-38.jpg finished. Proceeding adding recognized persons to the metadata.
 Found <REDACTED> in this image. Updating metadata!
@@ -88,3 +87,7 @@ For normal usage do the same but don’t include the last line or use [`pipx`](h
 ```
 pipx install git+https://github.com/jonasw234/face_tagger
 ```
+
+# Changelog
+## 0.1.0
+- Now processes video files (mp4, avi, mkv, mov) with `cv2`
