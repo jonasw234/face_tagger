@@ -90,4 +90,4 @@ pipx install git+https://github.com/jonasw234/face_tagger
 
 # Changelog
 ## 0.1.0
-- Now processes video files (mp4, avi, mkv, mov) with `cv2`
+- Now processes video files (mp4, avi, mkv, mov) with `cv2` (analyzes the first video frame only)
