@@ -5,7 +5,8 @@ Usage:
 gesichtserkennung.py [-v] --references=<PATH> [--tolerance=<VALUE>] <PATH>...
 
 -r PATH, --references <PATH>   Path to the folder with reference images
--t VALUE, --tolerance <VALUE>  Tolerance for face detection (higher: more false positives, less false negatives) [default: 0.55].
+-t VALUE, --tolerance <VALUE>  Tolerance for face detection (higher: more false
+                               positives, less false negatives) [default: 0.55].
 -v, --verbose                  Verbose output
 """
 import glob
@@ -93,7 +94,7 @@ def scan_files(files: List[str]) -> List[str]:
             logger.debug(
                 "Adding %s files in %s directory "
                 "(and its subdirectories) to input list.",
-                f"f{', '.join(ALLOWED_EXTENSIONS[:-1]}, and {ALLOWED_EXTENSIONS[-1]}",
+                f"{', '.join(ALLOWED_EXTENSIONS[:-1])}, and {ALLOWED_EXTENSIONS[-1]}",
                 file_path,
             )
             for extension in ALLOWED_EXTENSIONS:
@@ -298,7 +299,8 @@ def main(files: List[str], tolerance: float = 0.55, references: str = ""):
         for future, file_path in zip(futures, scan_files(files)):
             recognized_people = future.result()
             logger.debug(
-                "Analysis of %s finished. Proceeding adding recognized people to the metadata.",
+                "Analysis of %s finished. Proceeding adding recognized people to the "
+                "metadata.",
                 file_path,
             )
             if (
