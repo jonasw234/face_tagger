@@ -9,13 +9,14 @@ gesichtserkennung.py [-v] --references=<PATH> [--tolerance=<VALUE>] <PATH>...
                                positives, less false negatives) [default: 0.55].
 -v, --verbose                  Verbose output
 """
+
 import glob
 import logging
 import os
 import pickle
 import subprocess
-from concurrent.futures import ProcessPoolExecutor
-from typing import List, Tuple
+from concurrent.futures import Future, ProcessPoolExecutor
+from typing import Any
 
 import cv2
 import face_recognition.api as face_recognition
@@ -39,8 +40,8 @@ TOP_KEYWORD = "Personen"
 
 def exiftool_write(
     file_path: str,
-    hierarchical_metadata: List[str] = [TOP_KEYWORD],
-    metadata: List[str] = [TOP_KEYWORD],
+    hierarchical_metadata: list[str] = [TOP_KEYWORD],
+    metadata: list[str] = [TOP_KEYWORD],
 ):
     """Use exiftool to write metadata.
 
@@ -66,14 +67,17 @@ def exiftool_write(
     )
     parameters.extend([f"-Subject+={person}" for person in metadata])
     parameters.append(file_path)
-    subprocess.run(
-        parameters,
-        stdout=subprocess.DEVNULL,
-        check=True,
-    )
+    try:
+        _ = subprocess.run(
+            parameters,
+            stdout=subprocess.DEVNULL,
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        logger.error("Could not write metadata to %s", file_path)
 
 
-def scan_files(files: List[str]) -> List[str]:
+def scan_files(files: list[str]) -> list[str]:
     """Iterate through all files in a list of files.
     Recursively add image and movie files to the list if the file is a directory.
 
@@ -87,13 +91,13 @@ def scan_files(files: List[str]) -> List[str]:
     List[str]
         List of filenames
     """
-    filenames = []
+    filenames: list[str] = []
     for file_path in files:
         if os.path.isdir(file_path):
             # Add images and videos in directory
             logger.debug(
                 "Adding %s files in %s directory "
-                "(and its subdirectories) to input list.",
+                + "(and its subdirectories) to input list.",
                 f"{', '.join(ALLOWED_EXTENSIONS[:-1])}, and {ALLOWED_EXTENSIONS[-1]}",
                 file_path,
             )
@@ -111,10 +115,10 @@ def scan_files(files: List[str]) -> List[str]:
 
 def analyze_file(
     file_path: str,
-    known_names: List[str],
-    known_face_encodings: List[np.ndarray],
+    known_names: list[str],
+    known_face_encodings: list[np.ndarray],
     tolerance: float = 0.55,
-) -> List[str]:
+) -> list[str]:
     """Analyze a file and try to identify people in it.
 
     Parameters
@@ -162,13 +166,13 @@ def analyze_file(
 
     unknown_encodings = face_recognition.face_encodings(frame)
 
-    recognized_people = []
+    recognized_people: list[str] = []
 
     for unknown_encoding in unknown_encodings:
         distances = face_recognition.face_distance(
             known_face_encodings, unknown_encoding
         )
-        result = list(distances <= tolerance)
+        result: list[bool] = list(distances <= tolerance)
 
         if True in result:
             recognized_people.extend(
@@ -184,7 +188,7 @@ def analyze_file(
     return recognized_people
 
 
-def scan_known_people(known_people_folder: str) -> Tuple[List[str], List[np.ndarray]]:
+def scan_known_people(known_people_folder: str) -> tuple[list[str], list[np.ndarray[np.float64]]]:
     """Scan a folder with known people and return their name and encoding.
 
     Parameters
@@ -194,14 +198,14 @@ def scan_known_people(known_people_folder: str) -> Tuple[List[str], List[np.ndar
 
     Returns
     -------
-    Tuple[List[str], List[np.ndarray]]
+    Tuple[List[str], List[np.ndarray[np.float64]]]
         Name of the person and encoding
     """
-    known_names = []
-    known_face_encodings = []
+    known_names: list[str] = []
+    known_face_encodings: list[np.ndarray[np.float64]] = []
 
     # WARNING: Cache file needs to be trusted
-    known_filesize_bytes = []
+    known_filesize_bytes: list[int] = []
     cachefile_path = os.path.join(known_people_folder, "cache.pkl")
     cache_dirty = False
 
@@ -226,8 +230,8 @@ def scan_known_people(known_people_folder: str) -> Tuple[List[str], List[np.ndar
         logger.debug("%s does not exist in the cache yet.", file_path)
         cache_dirty = True
         # Not found in cache
-        img = face_recognition.load_image_file(file_path)
-        encodings = face_recognition.face_encodings(img)
+        img: np.ndarray[np.ndarray[np.uint8]] = face_recognition.load_image_file(file_path)
+        encodings: list[np.ndarray[np.float64]] = face_recognition.face_encodings(img)
 
         if len(encodings) > 1:
             logger.debug(
@@ -248,11 +252,12 @@ def scan_known_people(known_people_folder: str) -> Tuple[List[str], List[np.ndar
             pickle.dump(
                 [known_names, known_face_encodings, known_filesize_bytes], cachefile
             )
+        logger.info("Updated cache file %s.", cachefile_path)
 
     return known_names, known_face_encodings
 
 
-def add_metadata(file_path: str, recognized_people: List[str]):
+def add_metadata(file_path: str, recognized_people: list[str]):
     """Add list of recognized people to a file.
 
     Parameters
@@ -269,7 +274,7 @@ def add_metadata(file_path: str, recognized_people: List[str]):
     exiftool_write(file_path, recognized_people_sub, recognized_people)
 
 
-def main(files: List[str], tolerance: float = 0.55, references: str = ""):
+def main(files: list[str], tolerance: float = 0.55, references: str = ""):
     """Read list of files, recognize faces and update metadata.
 
     Parameters
@@ -288,7 +293,7 @@ def main(files: List[str], tolerance: float = 0.55, references: str = ""):
     known_names, known_face_encodings = scan_known_people(references)
     logger.debug("Using a tolerance of %f for face recognition.", tolerance)
     with ProcessPoolExecutor() as executor:
-        futures = []
+        futures: list[Future[Any]] = []
         for file_path in scan_files(files):
             logger.info("Starting analysis of %s ...", file_path)
             future = executor.submit(
@@ -297,10 +302,10 @@ def main(files: List[str], tolerance: float = 0.55, references: str = ""):
             futures.append(future)
 
         for future, file_path in zip(futures, scan_files(files)):
-            recognized_people = future.result()
+            recognized_people: list[str] = future.result()
             logger.debug(
                 "Analysis of %s finished. Proceeding adding recognized people to the "
-                "metadata.",
+                + "metadata.",
                 file_path,
             )
             if (
